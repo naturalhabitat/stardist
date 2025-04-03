@@ -1,14 +1,13 @@
-from pathlib import Path
-from pkg_resources import get_distribution
-from zipfile import ZipFile
-import numpy as np
 import tempfile
+from pathlib import Path
+from zipfile import ZipFile
+
+import numpy as np
+from csbdeep.utils import _raise, axes_check_and_normalize, normalize
 from packaging.version import Version
-from csbdeep.utils import axes_check_and_normalize, normalize, _raise
+from pkg_resources import get_distribution
 
-
-DEEPIMAGEJ_MACRO = \
-"""
+DEEPIMAGEJ_MACRO = """
 //*******************************************************************
 // Date: July-2021
 // Credits: StarDist, DeepImageJ
@@ -54,10 +53,10 @@ run("Command From Macro", "command=[de.csbdresden.stardist.StarDist2DNMS], args=
 
 def _import(error=True):
     try:
-        from importlib_metadata import metadata
-        from bioimageio.core.build_spec import build_model # type: ignore
+        import bioimageio.core  # type: ignore
         import xarray as xr
-        import bioimageio.core # type: ignore
+        from bioimageio.core.build_spec import build_model  # type: ignore
+        from importlib_metadata import metadata
     except ImportError:
         if error:
             raise RuntimeError(
@@ -73,24 +72,34 @@ def _import(error=True):
 def _create_stardist_dependencies(outdir):
     from ruamel.yaml import YAML
     from tensorflow import __version__ as tf_version
+
     from . import __version__ as stardist_version
+
     pkg_info = get_distribution("stardist")
     # dependencies that start with the name "bioimageio" will be added as conda dependencies
-    reqs_conda = [f"{req.project_name}{req.specifier}" for req in pkg_info.requires(extras=['bioimageio']) if req.key.startswith('bioimageio')]
+    reqs_conda = [
+        f"{req.project_name}{req.specifier}"
+        for req in pkg_info.requires(extras=["bioimageio"])
+        if req.key.startswith("bioimageio")
+    ]
     # only stardist and tensorflow as pip dependencies
     v_tf = Version(tf_version)
-    reqs_pip = (f"stardist>={stardist_version}", f"tensorflow>={v_tf.major}.{v_tf.minor},<{v_tf.major+1}")
+    reqs_pip = (
+        f"stardist>={stardist_version}",
+        f"tensorflow>={v_tf.major}.{v_tf.minor},<{v_tf.major+1}",
+    )
     # conda environment
     env = dict(
-        name = 'stardist',
-        channels = ['defaults', 'conda-forge'],
-        dependencies = [
-            ('python>=3.7,<3.8' if v_tf.major == 1 else 'python>=3.7'),
+        name="stardist",
+        channels=["defaults", "conda-forge"],
+        dependencies=[
+            ("python>=3.7,<3.8" if v_tf.major == 1 else "python>=3.7"),
             *reqs_conda,
-            'pip', {'pip': reqs_pip},
+            "pip",
+            {"pip": reqs_pip},
         ],
     )
-    yaml = YAML(typ='safe')
+    yaml = YAML(typ="safe")
     path = outdir / "environment.yaml"
     with open(path, "w") as f:
         yaml.dump(env, f)
@@ -115,31 +124,45 @@ def _get_stardist_metadata(outdir, model, generate_default_deps):
     doi_2d = "https://doi.org/10.1007/978-3-030-00934-2_30"
     doi_3d = "https://doi.org/10.1109/WACV45572.2020.9093435"
     authors = {
-        'Martin Weigert': dict(name='Martin Weigert', github_user='maweigert'),
-        'Uwe Schmidt': dict(name='Uwe Schmidt', github_user='uschmidt83'),
+        "Martin Weigert": dict(name="Martin Weigert", github_user="maweigert"),
+        "Uwe Schmidt": dict(name="Uwe Schmidt", github_user="uschmidt83"),
     }
     data = dict(
         description=package_data["Summary"],
-        authors=list(authors.get(name.strip(),dict(name=name.strip())) for name in package_data["Author"].split(",")),
+        authors=list(
+            authors.get(name.strip(), dict(name=name.strip()))
+            for name in package_data["Author"].split(",")
+        ),
         git_repo=package_data["Home-Page"],
         license=package_data["License"],
-        cite=[{"text": "Cell Detection with Star-Convex Polygons", "doi": doi_2d},
-              {"text": "Star-convex Polyhedra for 3D Object Detection and Segmentation in Microscopy", "doi": doi_3d}],
-        tags=[
-            'fluorescence-light-microscopy', 'whole-slide-imaging', 'other', # modality
-            f'{model.config.n_dim}d', # dims
-            'cells', 'nuclei', # content
-            'tensorflow', # framework
-            'fiji', # software
-            'unet', # network
-            'instance-segmentation', 'object-detection', # task
-            'stardist',
+        cite=[
+            {"text": "Cell Detection with Star-Convex Polygons", "doi": doi_2d},
+            {
+                "text": "Star-convex Polyhedra for 3D Object Detection and Segmentation in Microscopy",
+                "doi": doi_3d,
+            },
         ],
-        covers=["https://raw.githubusercontent.com/stardist/stardist/main/images/stardist_logo.jpg"],
+        tags=[
+            "fluorescence-light-microscopy",
+            "whole-slide-imaging",
+            "other",  # modality
+            f"{model.config.n_dim}d",  # dims
+            "cells",
+            "nuclei",  # content
+            "tensorflow",  # framework
+            "fiji",  # software
+            "unet",  # network
+            "instance-segmentation",
+            "object-detection",  # task
+            "stardist",
+        ],
+        covers=[
+            "https://raw.githubusercontent.com/stardist/stardist/main/images/stardist_logo.jpg"
+        ],
         documentation=_create_stardist_doc(outdir),
     )
     if generate_default_deps:  # only if requested, as not required for bioimage.io
-        data['dependencies'] = _create_stardist_dependencies(outdir)
+        data["dependencies"] = _create_stardist_dependencies(outdir)
 
     return data
 
@@ -147,6 +170,7 @@ def _get_stardist_metadata(outdir, model, generate_default_deps):
 def _predict_tf(model_path, test_input):
     import tensorflow as tf
     from csbdeep.utils.tf import IS_TF_1
+
     # need to unzip the model assets
     model_assets = model_path.parent / "tf_model"
     with ZipFile(model_path, "r") as f:
@@ -170,14 +194,25 @@ def _predict_tf(model_path, test_input):
     return output
 
 
-def _get_weights_and_model_metadata(outdir, model, test_input, test_input_axes, test_input_norm_axes, mode, min_percentile, max_percentile):
+def _get_weights_and_model_metadata(
+    outdir,
+    model,
+    test_input,
+    test_input_axes,
+    test_input_norm_axes,
+    mode,
+    min_percentile,
+    max_percentile,
+):
 
     # get the path to the exported model assets (saved in outdir)
     if mode == "keras_hdf5":
         raise NotImplementedError("Export to keras format is not supported yet")
     elif mode == "tensorflow_saved_model_bundle":
         assets_uri = outdir / "TF_SavedModel.zip"
-        model_csbdeep = model.export_TF(assets_uri, single_output=True, upsample_grid=True)
+        model_csbdeep = model.export_TF(
+            assets_uri, single_output=True, upsample_grid=True
+        )
     else:
         raise ValueError(f"Unsupported mode: {mode}")
 
@@ -195,21 +230,27 @@ def _get_weights_and_model_metadata(outdir, model, test_input, test_input_axes, 
     )
 
     # normalization axes string and numeric indices
-    axes_norm = set(axes_net).intersection(set(axes_check_and_normalize(test_input_norm_axes, disallowed='S')))
-    axes_norm = "".join(a for a in axes_net if a in axes_norm)  # preserve order of axes_net
+    axes_norm = set(axes_net).intersection(
+        set(axes_check_and_normalize(test_input_norm_axes, disallowed="S"))
+    )
+    axes_norm = "".join(
+        a for a in axes_net if a in axes_norm
+    )  # preserve order of axes_net
     axes_norm_num = tuple(axes_net.index(a) for a in axes_norm)
 
     # normalize input image
-    test_input_norm = normalize(test_input, pmin=min_percentile, pmax=max_percentile, axis=axes_norm_num)
+    test_input_norm = normalize(
+        test_input, pmin=min_percentile, pmax=max_percentile, axis=axes_norm_num
+    )
 
     net_axes_in = axes_net.lower()
     net_axes_out = axes_check_and_normalize(model._axes_out).lower()
     ndim_tensor = len(net_axes_out) + 1
 
     input_min_shape = list(axes_net_div_by)
-    input_min_shape[axes_net.index('C')] = model.config.n_channel_in
+    input_min_shape[axes_net.index("C")] = model.config.n_channel_in
     input_step = list(axes_net_div_by)
-    input_step[axes_net.index('C')] = 0
+    input_step[axes_net.index("C")] = 0
 
     # add the batch axis to shape and step
     input_min_shape = [1] + input_min_shape
@@ -220,16 +261,23 @@ def _get_weights_and_model_metadata(outdir, model, test_input, test_input_axes, 
     output_axes = "b" + net_axes_out.lower()
 
     if mode == "keras_hdf5":
-        output_names = ("prob", "dist") + (("class_prob",) if model._is_multiclass() else ())
-        output_n_channels = (1, model.config.n_rays,) + ((1,) if model._is_multiclass() else ())
+        output_names = ("prob", "dist") + (
+            ("class_prob",) if model._is_multiclass() else ()
+        )
+        output_n_channels = (
+            1,
+            model.config.n_rays,
+        ) + ((1,) if model._is_multiclass() else ())
         # the output shape is computed from the input shape using
         # output_shape[i] = output_scale[i] * input_shape[i] + 2 * output_offset[i]
-        output_scale = [1]+list(1/g for g in model.config.grid) + [0]
-        output_offset = [0]*(ndim_tensor)
+        output_scale = [1] + list(1 / g for g in model.config.grid) + [0]
+        output_offset = [0] * (ndim_tensor)
 
     elif mode == "tensorflow_saved_model_bundle":
         if model._is_multiclass():
-            raise NotImplementedError("Tensorflow SavedModel not supported for multiclass models yet")
+            raise NotImplementedError(
+                "Tensorflow SavedModel not supported for multiclass models yet"
+            )
         # regarding input/output names: https://github.com/CSBDeep/CSBDeep/blob/b0d2f5f344ebe65a9b4c3007f4567fe74268c813/csbdeep/utils/tf.py#L193-L194
         input_names = ["input"]
         output_names = ["output"]
@@ -237,22 +285,30 @@ def _get_weights_and_model_metadata(outdir, model, test_input, test_input_axes, 
         # the output shape is computed from the input shape using
         # output_shape[i] = output_scale[i] * input_shape[i] + 2 * output_offset[i]
         # same shape as input except for the channel dimension
-        output_scale = [1]*(ndim_tensor)
+        output_scale = [1] * (ndim_tensor)
         output_scale[output_axes.index("c")] = 0
         # no offset, except for the input axes, where it is output channel / 2
-        output_offset = [0.0]*(ndim_tensor)
+        output_offset = [0.0] * (ndim_tensor)
         output_offset[output_axes.index("c")] = output_n_channels[0] / 2.0
 
-    assert all(s in (0, 1) for s in output_scale), "halo computation assumption violated"
-    halo = model._axes_tile_overlap(output_axes.replace('b', 's'))
-    halo = [int(np.ceil(v/8)*8) for v in halo]  # optional: round up to be divisible by 8
+    assert all(
+        s in (0, 1) for s in output_scale
+    ), "halo computation assumption violated"
+    halo = model._axes_tile_overlap(output_axes.replace("b", "s"))
+    halo = [
+        int(np.ceil(v / 8) * 8) for v in halo
+    ]  # optional: round up to be divisible by 8
 
     # the output shape needs to be valid after cropping the halo, so we add the halo to the input min shape
     input_min_shape = [ms + 2 * ha for ms, ha in zip(input_min_shape, halo)]
 
     # make sure the input min shape is still divisible by the min axis divisor
-    input_min_shape = input_min_shape[:1] + [ms + (-ms % div_by) for ms, div_by in zip(input_min_shape[1:], axes_net_div_by)]
-    assert all(ms % div_by == 0 for ms, div_by in zip(input_min_shape[1:], axes_net_div_by))
+    input_min_shape = input_min_shape[:1] + [
+        ms + (-ms % div_by) for ms, div_by in zip(input_min_shape[1:], axes_net_div_by)
+    ]
+    assert all(
+        ms % div_by == 0 for ms, div_by in zip(input_min_shape[1:], axes_net_div_by)
+    )
 
     metadata, *_ = _import()
     package_data = metadata("stardist")
@@ -272,9 +328,13 @@ def _get_weights_and_model_metadata(outdir, model, test_input, test_input_axes, 
 
     if is_2D:
         macro_file = outdir / "stardist_postprocessing.ijm"
-        with open(str(macro_file), 'w', encoding='utf-8') as f:
-            f.write(DEEPIMAGEJ_MACRO.format(probThresh=model.thresholds.prob, nmsThresh=model.thresholds.nms))
-        config['stardist'].update(postprocessing_macro=macro_file.name)
+        with open(str(macro_file), "w", encoding="utf-8") as f:
+            f.write(
+                DEEPIMAGEJ_MACRO.format(
+                    probThresh=model.thresholds.prob, nmsThresh=model.thresholds.nms
+                )
+            )
+        config["stardist"].update(postprocessing_macro=macro_file.name)
 
     n_inputs = len(input_names)
     assert n_inputs == 1
@@ -284,15 +344,20 @@ def _get_weights_and_model_metadata(outdir, model, test_input, test_input_axes, 
         input_step=[input_step],
         input_axes=[input_axes],
         input_data_range=[["-inf", "inf"]],
-        preprocessing=[[dict(
-            name="scale_range",
-            kwargs=dict(
-                mode="per_sample",
-                axes=axes_norm.lower(),
-                min_percentile=min_percentile,
-                max_percentile=max_percentile,
-            ))]]
-        )
+        preprocessing=[
+            [
+                dict(
+                    name="scale_range",
+                    kwargs=dict(
+                        mode="per_sample",
+                        axes=axes_norm.lower(),
+                        min_percentile=min_percentile,
+                        max_percentile=max_percentile,
+                    ),
+                )
+            ]
+        ],
+    )
 
     n_outputs = len(output_names)
     output_config = dict(
@@ -302,7 +367,7 @@ def _get_weights_and_model_metadata(outdir, model, test_input, test_input_axes, 
         output_reference=[input_names[0]] * n_outputs,
         output_scale=[output_scale] * n_outputs,
         output_offset=[output_offset] * n_outputs,
-        halo=[halo] * n_outputs
+        halo=[halo] * n_outputs,
     )
 
     in_path = outdir / "test_input.npy"
@@ -323,8 +388,14 @@ def _get_weights_and_model_metadata(outdir, model, test_input, test_input_axes, 
     np.save(out_paths[0], test_outputs)
 
     from tensorflow import __version__ as tf_version
-    data = dict(weight_uri=assets_uri, test_inputs=[in_path], test_outputs=out_paths,
-                config=config, tensorflow_version=tf_version)
+
+    data = dict(
+        weight_uri=assets_uri,
+        test_inputs=[in_path],
+        test_outputs=out_paths,
+        config=config,
+        tensorflow_version=tf_version,
+    )
     data.update(input_config)
     data.update(output_config)
     _files = [str(weights_file)]
@@ -340,7 +411,7 @@ def export_bioimageio(
     outpath,
     test_input,
     test_input_axes=None,
-    test_input_norm_axes='ZYX',
+    test_input_norm_axes="ZYX",
     name=None,
     mode="tensorflow_saved_model_bundle",
     min_percentile=1.0,
@@ -382,8 +453,13 @@ def export_bioimageio(
     """
     _, build_model, *_ = _import()
     from .models import StarDist2D, StarDist3D
-    isinstance(model, (StarDist2D, StarDist3D)) or _raise(ValueError("not a valid model"))
-    0 <= min_percentile < max_percentile <= 100 or _raise(ValueError("invalid percentile values"))
+
+    isinstance(model, (StarDist2D, StarDist3D)) or _raise(
+        ValueError("not a valid model")
+    )
+    0 <= min_percentile < max_percentile <= 100 or _raise(
+        ValueError("invalid percentile values")
+    )
 
     if name is None:
         name = model.name
@@ -403,13 +479,27 @@ def export_bioimageio(
     with tempfile.TemporaryDirectory() as _tmp_dir:
         tmp_dir = Path(_tmp_dir)
         kwargs = _get_stardist_metadata(tmp_dir, model, generate_default_deps)
-        model_kwargs = _get_weights_and_model_metadata(tmp_dir, model, test_input, test_input_axes, test_input_norm_axes, mode,
-                                                       min_percentile=min_percentile, max_percentile=max_percentile)
+        model_kwargs = _get_weights_and_model_metadata(
+            tmp_dir,
+            model,
+            test_input,
+            test_input_axes,
+            test_input_norm_axes,
+            mode,
+            min_percentile=min_percentile,
+            max_percentile=max_percentile,
+        )
         kwargs.update(model_kwargs)
         if overwrite_spec_kwargs is not None:
             kwargs.update(overwrite_spec_kwargs)
 
-        build_model(name=name, output_path=zip_path, add_deepimagej_config=(model.config.n_dim==2), root=tmp_dir, **kwargs)
+        build_model(
+            name=name,
+            output_path=zip_path,
+            add_deepimagej_config=(model.config.n_dim == 2),
+            root=tmp_dir,
+            **kwargs,
+        )
         print(f"\nbioimage.io model with name '{name}' exported to '{zip_path}'")
 
 
@@ -432,9 +522,13 @@ def import_bioimageio(source, outpath):
         stardist model loaded from `outpath`
 
     """
-    import shutil, uuid
+    import shutil
+    import uuid
+
     from csbdeep.utils import save_json
+
     from .models import StarDist2D, StarDist3D
+
     *_, bioimageio_core, _ = _import()
 
     outpath = Path(outpath)
@@ -452,10 +546,12 @@ def import_bioimageio(source, outpath):
         biomodel = bioimageio_core.load_resource_description(rdf_path)
 
         # read the stardist specific content
-        'stardist' in biomodel.config or _raise(RuntimeError("bioimage.io model not compatible"))
-        config = biomodel.config['stardist']['config']
-        thresholds = biomodel.config['stardist']['thresholds']
-        weights = biomodel.config['stardist']['weights']
+        "stardist" in biomodel.config or _raise(
+            RuntimeError("bioimage.io model not compatible")
+        )
+        config = biomodel.config["stardist"]["config"]
+        thresholds = biomodel.config["stardist"]["thresholds"]
+        weights = biomodel.config["stardist"]["weights"]
 
         # make sure that the keras weights are in the attachments
         weights_file = None
@@ -463,17 +559,19 @@ def import_bioimageio(source, outpath):
             if f.name == weights and f.exists():
                 weights_file = f
                 break
-        weights_file is not None or _raise(FileNotFoundError(f"couldn't find weights file '{weights}'"))
+        weights_file is not None or _raise(
+            FileNotFoundError(f"couldn't find weights file '{weights}'")
+        )
 
         # save the config and threshold to json, and weights to hdf5 to enable loading as stardist model
         # copy bioimageio files to separate sub-folder
         outpath.mkdir(parents=True)
-        save_json(config, str(outpath / 'config.json'))
-        save_json(thresholds, str(outpath / 'thresholds.json'))
+        save_json(config, str(outpath / "config.json"))
+        save_json(thresholds, str(outpath / "thresholds.json"))
         shutil.copy(str(weights_file), str(outpath / "weights_bioimageio.h5"))
         shutil.copytree(str(tmp_dir), str(outpath / "bioimageio"))
 
-    model_class = (StarDist2D if config['n_dim'] == 2 else StarDist3D)
+    model_class = StarDist2D if config["n_dim"] == 2 else StarDist3D
     model = model_class(None, outpath.name, basedir=str(outpath.parent))
 
     return model
