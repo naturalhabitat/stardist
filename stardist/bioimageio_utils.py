@@ -1,11 +1,13 @@
 import tempfile
 from pathlib import Path
+from typing import Union
 from zipfile import ZipFile
 
 import numpy as np
 from csbdeep.utils import _raise, axes_check_and_normalize, normalize
 from packaging.version import Version
 from pkg_resources import get_distribution
+from typing_extensions import assert_never
 
 DEEPIMAGEJ_MACRO = """
 //*******************************************************************
@@ -50,23 +52,25 @@ run("royal");
 run("Command From Macro", "command=[de.csbdresden.stardist.StarDist2DNMS], args=['prob':'scores', 'dist':'distances', 'probThresh':'" + probThresh + "', 'nmsThresh':'" + nmsThresh + "', 'outputType':'Both', 'excludeBoundary':'2', 'roiPosition':'Stack', 'verbose':'false'], process=[false]");
 """
 
+_BIOIMAGEIO_LIBRARIES_ARE_MISSING = (
+    "Required libraries are missing for bioimage.io model export.\n"
+    "Please install StarDist as follows: pip install 'stardist[bioimageio]'\n"
+    "(You do not need to uninstall StarDist first.)"
+)
+
 
 def _import(error=True):
     try:
-        import bioimageio.core  # type: ignore
+        import bioimageio.core
         import xarray as xr
-        from bioimageio.core.build_spec import build_model  # type: ignore
+        from bioimageio.spec.model.v0_5 import ModelDescr
         from importlib_metadata import metadata
     except ImportError:
         if error:
-            raise RuntimeError(
-                "Required libraries are missing for bioimage.io model export.\n"
-                "Please install StarDist as follows: pip install 'stardist[bioimageio]'\n"
-                "(You do not need to uninstall StarDist first.)"
-            )
+            raise RuntimeError(_BIOIMAGEIO_LIBRARIES_ARE_MISSING)
         else:
             return None
-    return metadata, build_model, bioimageio.core, xr
+    return metadata, ModelDescr, bioimageio.core, xr
 
 
 def _create_stardist_dependencies(outdir):
@@ -503,7 +507,7 @@ def export_bioimageio(
         print(f"\nbioimage.io model with name '{name}' exported to '{zip_path}'")
 
 
-def import_bioimageio(source, outpath):
+def import_bioimageio(source: Union[str, Path], outpath: Union[str, Path]):
     """Import stardist model from bioimage.io format, https://github.com/bioimage-io/spec-bioimage-io.
 
     Load a model in bioimage.io format from the given `source` (e.g. path to zip file, URL)
@@ -512,7 +516,7 @@ def import_bioimageio(source, outpath):
     Parameters
     ----------
     source: str, Path
-        bioimage.io resource (e.g. path, URL)
+        bioimage.io resource (e.g. path, URL, bioimageio ID)
     outpath: str, Path
         folder to save the stardist model (must not exist previously)
 
@@ -523,13 +527,20 @@ def import_bioimageio(source, outpath):
 
     """
     import shutil
-    import uuid
 
     from csbdeep.utils import save_json
 
     from .models import StarDist2D, StarDist3D
 
-    *_, bioimageio_core, _ = _import()
+    try:
+        from bioimageio.spec import (
+            load_model_description,
+            save_bioimageio_package_as_folder,
+        )
+        from bioimageio.spec.model import v0_4, v0_5
+        from bioimageio.spec.utils import download, extract_file_name
+    except Exception as e:
+        raise RuntimeError(_BIOIMAGEIO_LIBRARIES_ARE_MISSING) from e
 
     outpath = Path(outpath)
     not outpath.exists() or _raise(FileExistsError(f"'{outpath}' already exists"))
@@ -537,13 +548,8 @@ def import_bioimageio(source, outpath):
     with tempfile.TemporaryDirectory() as _tmp_dir:
         tmp_dir = Path(_tmp_dir)
         # download the full model content to a temporary folder
-        zip_path = tmp_dir / f"{str(uuid.uuid4())}.zip"
-        bioimageio_core.export_resource_package(source, output_path=zip_path)
-        with ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(tmp_dir)
-        zip_path.unlink()
-        rdf_path = tmp_dir / "rdf.yaml"
-        biomodel = bioimageio_core.load_resource_description(rdf_path)
+        # bioimageio_core.save_bioimageio_package_as_folder(source, output_path=tmp_dir)
+        biomodel = load_model_description(tmp_dir)
 
         # read the stardist specific content
         "stardist" in biomodel.config or _raise(
@@ -554,22 +560,35 @@ def import_bioimageio(source, outpath):
         weights = biomodel.config["stardist"]["weights"]
 
         # make sure that the keras weights are in the attachments
-        weights_file = None
-        for f in biomodel.attachments.files:
-            if f.name == weights and f.exists():
-                weights_file = f
-                break
-        weights_file is not None or _raise(
+        weights_source = None
+        if isinstance(biomodel, v0_4.ModelDescr):
+            if biomodel.attachments is not None:
+                for f in biomodel.attachments.files:
+                    if extract_file_name(f) == weights:
+                        weights_source = f
+                        break
+        elif isinstance(biomodel, v0_5.ModelDescr):
+            for f in biomodel.attachments:
+                if extract_file_name(f.source) == weights:
+                    weights_source = f
+                    break
+        else:
+            assert_never(biomodel)
+
+        weights_source is not None or _raise(
             FileNotFoundError(f"couldn't find weights file '{weights}'")
         )
 
         # save the config and threshold to json, and weights to hdf5 to enable loading as stardist model
-        # copy bioimageio files to separate sub-folder
         outpath.mkdir(parents=True)
         save_json(config, str(outpath / "config.json"))
         save_json(thresholds, str(outpath / "thresholds.json"))
-        shutil.copy(str(weights_file), str(outpath / "weights_bioimageio.h5"))
-        shutil.copytree(str(tmp_dir), str(outpath / "bioimageio"))
+        shutil.copy(
+            str(download(weights_source).path), str(outpath / "weights_bioimageio.h5")
+        )
+
+        # save bioimageio files to separate sub-folder  # TODO: what for actually?
+        save_bioimageio_package_as_folder(biomodel, output_path=outpath / "bioimageio")
 
     model_class = StarDist2D if config["n_dim"] == 2 else StarDist3D
     model = model_class(None, outpath.name, basedir=str(outpath.parent))
