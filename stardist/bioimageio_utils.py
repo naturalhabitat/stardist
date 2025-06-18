@@ -545,52 +545,49 @@ def import_bioimageio(source: Union[str, Path], outpath: Union[str, Path]):
     outpath = Path(outpath)
     not outpath.exists() or _raise(FileExistsError(f"'{outpath}' already exists"))
 
-    with tempfile.TemporaryDirectory() as _tmp_dir:
-        tmp_dir = Path(_tmp_dir)
-        # download the full model content to a temporary folder
-        # bioimageio_core.save_bioimageio_package_as_folder(source, output_path=tmp_dir)
-        biomodel = load_model_description(tmp_dir)
+    # download the full model content to a temporary folder
+    # bioimageio_core.save_bioimageio_package_as_folder(source, output_path=tmp_dir)
+    biomodel = load_model_description(source)
 
-        # read the stardist specific content
-        "stardist" in biomodel.config or _raise(
-            RuntimeError("bioimage.io model not compatible")
-        )
-        config = biomodel.config["stardist"]["config"]
-        thresholds = biomodel.config["stardist"]["thresholds"]
-        weights = biomodel.config["stardist"]["weights"]
+    # read the stardist specific content
+    if "stardist" not in biomodel.config:
+        raise RuntimeError("bioimage.io model not compatible")
 
-        # make sure that the keras weights are in the attachments
-        weights_source = None
-        if isinstance(biomodel, v0_4.ModelDescr):
-            if biomodel.attachments is not None:
-                for f in biomodel.attachments.files:
-                    if extract_file_name(f) == weights:
-                        weights_source = f
-                        break
-        elif isinstance(biomodel, v0_5.ModelDescr):
-            for f in biomodel.attachments:
-                if extract_file_name(f.source) == weights:
+    config = biomodel.config["stardist"]["config"]
+    thresholds = biomodel.config["stardist"]["thresholds"]
+    weights = biomodel.config["stardist"]["weights"]
+
+    # make sure that the keras weights are in the attachments
+    weights_source = None
+    if isinstance(biomodel, v0_4.ModelDescr):
+        if biomodel.attachments is not None:
+            for f in biomodel.attachments.files:
+                if extract_file_name(f) == weights:
                     weights_source = f
                     break
-        else:
-            assert_never(biomodel)
+    elif isinstance(biomodel, v0_5.ModelDescr):
+        for f in biomodel.attachments:
+            if extract_file_name(f.source) == weights:
+                weights_source = f
+                break
+    else:
+        assert_never(biomodel)
 
-        weights_source is not None or _raise(
-            FileNotFoundError(f"couldn't find weights file '{weights}'")
-        )
+    if weights_source is None:
+        raise FileNotFoundError(f"couldn't find weights file '{weights}'")
 
-        # save the config and threshold to json, and weights to hdf5 to enable loading as stardist model
-        outpath.mkdir(parents=True)
-        save_json(config, str(outpath / "config.json"))
-        save_json(thresholds, str(outpath / "thresholds.json"))
-        shutil.copy(
-            str(download(weights_source).path), str(outpath / "weights_bioimageio.h5")
-        )
+    # save the config and threshold to json, and weights to hdf5 to enable loading as stardist model
+    outpath.mkdir(parents=True)
+    save_json(config, str(outpath / "config.json"))
+    save_json(thresholds, str(outpath / "thresholds.json"))
+    shutil.copy(
+        str(download(weights_source).path), str(outpath / "weights_bioimageio.h5")
+    )
 
-        # save bioimageio files to separate sub-folder  # TODO: what for actually?
-        save_bioimageio_package_as_folder(biomodel, output_path=outpath / "bioimageio")
+    # save bioimageio files to separate sub-folder  # TODO: what for actually?
+    _ = save_bioimageio_package_as_folder(biomodel, output_path=outpath / "bioimageio")
 
     model_class = StarDist2D if config["n_dim"] == 2 else StarDist3D
-    model = model_class(None, outpath.name, basedir=str(outpath.parent))
+    model = model_class(name=outpath.name, basedir=str(outpath.parent))
 
     return model
